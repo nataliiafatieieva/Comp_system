@@ -1,0 +1,250 @@
+
+const http = require("http");
+const { URL } = require("url");
+
+// Обробка матриці (інверсія та обернена матриця)
+function invertMatrix(matrix) {
+return matrix.map((row) => row.map((value) => 1 / value));
+}
+
+function inverseMatrix(matrix) {
+const size = matrix.length;
+let identity = matrix.map((row, i) => row.map((_, j) => (i === j ? 1 : 0)));
+let copy = matrix.map((row) => [...row]);
+
+for (let i = 0; i < size; i++) {
+let diagElement = copy[i][i];
+for (let j = 0; j < size; j++) {
+copy[i][j] /= diagElement;
+identity[i][j] /= diagElement;
+}
+for (let k = 0; k < size; k++) {
+if (k !== i) {
+let factor = copy[k][i];
+for (let j = 0; j < size; j++) {
+copy[k][j] -= factor * copy[i][j];
+identity[k][j] -= factor * identity[i][j];
+}
+}
+}
+}
+return identity;
+}
+
+// HTML+JS в одному
+const html = `
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Matrix Client</title>
+<style>
+body { font-family: sans-serif; }
+h1, h2 { text-align: center; }
+.controls { display: flex; flex-direction: column; align-items: center; margin-bottom: 20px; }
+.control-row { margin-bottom: 10px; }
+label { margin-right: 10px; }
+input[type="number"] { width: 80px; }
+button { padding: 8px 15px; margin-right: 10px; cursor: pointer; }
+#results-container { margin-top: 20px; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+th { background-color: #f0f0f0; }
+.download-button {
+background-color: #4CAF50;
+color: white;
+border: none;
+padding: 8px 12px;
+text-align: center;
+text-decoration: none;
+display: inline-block;
+font-size: 14px;
+margin: 4px 2px;
+cursor: pointer;
+}
+</style>
+</head>
+<body>
+
+<h1>Matrix Client</h1>
+
+<div class="controls">
+<div class="control-row">
+<label for="matrixSize">Size of square matrix:</label>
+<input type="number" id="matrixSize" value="3" min="1" max="10" />
+</div>
+<div class="control-row">
+<button onclick="sendMatrix('invert')">Invert matrix</button>
+<button onclick="sendMatrix('inverse')">Inverse matrix</button>
+</div>
+</div>
+
+<div id="results-container">
+<h2>Results:</h2>
+<table border="1" id="experimentTable">
+<thead>
+<tr>
+<th>#</th>
+<th>Matrix Size</th>
+<th>Operation</th>
+<th>Estimated Request Time (s)</th>
+<th>Total Request Time (s)</th>
+<th>Calculation Time (s)</th>
+<th>Delay δ (s)</th>
+<th>Bandwidth B (Mbit/s)</th>
+<th>Transmission Delay τ (s)</th>
+<th>Relative Delay r</th>
+<th>Efficiency η</th>
+<th>Download Original</th>
+<th>Download Result</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+</div>
+
+<script>
+let experimentCount = 0;
+
+function disableButtons(disabled) {
+document.querySelectorAll("button").forEach((button) => {
+button.disabled = disabled;
+});
+}
+
+function generateMatrix(size) {
+let matrix = [];
+for (let i = 0; i < size; i++) {
+let row = [];
+for (let j = 0; j < size; j++) {
+row.push((Math.random() * 99 + 1).toFixed(2));
+}
+matrix.push(row);
+}
+return matrix;
+}
+
+function addExperimentToTable(experimentNumber, size, operation, originalMatrix, processedMatrix, channelParams, calculateTime, realTime) {
+const table = document.getElementById("experimentTable").getElementsByTagName("tbody")[0];
+const row = table.insertRow();
+row.insertCell(0).innerText = experimentNumber;
+row.insertCell(1).innerText = size;
+row.insertCell(2).innerText = operation;
+row.insertCell(3).innerText = channelParams.T;
+row.insertCell(4).innerText = realTime;
+row.insertCell(5).innerText = calculateTime;
+row.insertCell(6).innerText = channelParams.delta;
+row.insertCell(7).innerText = channelParams.B;
+row.insertCell(8).innerText = channelParams.tau;
+row.insertCell(9).innerText = channelParams.r;
+row.insertCell(10).innerText = channelParams.eta;
+row.insertCell(11).appendChild(createDownloadButton(originalMatrix, \`original_\${experimentNumber}.txt\`));
+row.insertCell(12).appendChild(createDownloadButton(processedMatrix, \`processed_\${experimentNumber}.txt\`));
+}
+
+function createDownloadButton(matrix, filename) {
+const text = matrix.map((row) => row.join("\\t")).join("\\n");
+const blob = new Blob([text], { type: "text/plain" });
+const url = URL.createObjectURL(blob);
+const downloadButton = document.createElement("a");
+downloadButton.innerText = "Скачать";
+downloadButton.href = url;
+downloadButton.download = filename;
+downloadButton.className = "download-button";
+return downloadButton;
+}
+
+function calculateChannelParameters(delta, tau, calculateTime, matrixSize) {
+const totalBits = matrixSize * matrixSize;
+const bandwidth = (tau * totalBits) / 1000000;
+const r = (delta / tau).toFixed(7);
+const eta = (1 / (1 + 2 * r)).toFixed(7);
+const T = tau + 2 * delta + calculateTime;
+return {
+delta: delta.toFixed(7),
+B: bandwidth.toFixed(7),
+tau: tau.toFixed(7),
+r: r,
+eta: eta,
+T: T.toFixed(7),
+};
+}
+
+function sendMatrix(operation) {
+const size = document.getElementById("matrixSize").value;
+const matrix = generateMatrix(size);
+const startTime = performance.now();
+disableButtons(true);
+
+fetch("/process", {
+method: "POST",
+headers: { "Content-Type": "application/json" },
+body: JSON.stringify({ matrix, operation }),
+})
+.then((response) => response.json())
+.then((data) => {
+experimentCount++;
+const endTime = performance.now();
+const tau = (endTime - startTime - data.calculateTime).toFixed(7) / 1000;
+const realTime = (endTime - startTime).toFixed(7) / 1000;
+const delta = (2 * data.delta) / 1000;
+const channelParams = calculateChannelParameters(delta, tau, data.calculateTime / 1000, size);
+addExperimentToTable(experimentCount, size, operation, matrix, data.result, channelParams, (data.calculateTime / 1000).toFixed(7), realTime);
+})
+.catch((error) => console.error("Ошибка:", error))
+.finally(() => disableButtons(false));
+}
+</script>
+</body>
+</html>
+`;
+
+// Сервер
+const server = http.createServer((req, res) => {
+const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
+
+if (req.method === "GET" && parsedUrl.pathname === "/") {
+res.writeHead(200, { "Content-Type": "text/html" });
+res.end(html);
+} else if (req.method === "POST" && parsedUrl.pathname === "/process") {
+let startTime = performance.now();
+let body = "";
+req.on("data", (chunk) => {
+body += chunk.toString();
+});
+req.on("end", () => {
+let endTime = performance.now();
+try {
+const { matrix, operation } = JSON.parse(body);
+let result;
+const delta = (endTime - startTime) / (matrix.length * matrix.length);
+const startCalc = performance.now();
+
+if (operation === "invert") {
+result = invertMatrix(matrix);
+} else if (operation === "inverse") {
+result = inverseMatrix(matrix);
+} else {
+throw new Error("Неверная операция");
+}
+
+const endCalc = performance.now();
+const calculateTime = endCalc - startCalc;
+
+res.writeHead(200, { "Content-Type": "application/json" });
+res.end(JSON.stringify({ result, delta, calculateTime }));
+} catch (error) {
+res.writeHead(400, { "Content-Type": "application/json" });
+res.end(JSON.stringify({ error: error.message }));
+}
+});
+} else {
+res.writeHead(404, { "Content-Type": "text/plain" });
+res.end("Страница не найдена");
+}
+});
+
+server.listen(3000, () => {
+console.log("Сервер запущен на порту 3000");
+});
